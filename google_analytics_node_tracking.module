@@ -1,0 +1,134 @@
+<?php
+
+/**
+ * @file
+ * Google Analytics Node Tracking provides node type data to Google Analytics
+ * and provides blocks displaying the most popular nodes per node type over the
+ * previous 30 days.
+ *
+ * Copyright 2010, Matt Farina
+ * Licensed under the GPL Version 2 license.
+ */
+
+include_once('google_analytics_node_tracking.features.inc');
+
+/**
+ * Implementation of hook_init().
+ *
+ * Add a JavaScript variable to Drupal.settings for the node type when on
+ * node/123 (viewing) pages.
+ */
+function google_analytics_node_tracking_init() {
+  $item = menu_get_item();
+  if ($item['path'] == 'node/%') {
+    $node = $item['page_arguments'][0];
+    if (isset($node->type)) {
+      drupal_add_js(array('GoogleAnalyticsNodeTracking' => array('nodeType' => $node->type)), 'setting');
+    }
+  }
+}
+
+/**
+ * Implementation of hook_block().
+ */
+function google_analytics_node_tracking_block($op = 'list', $delta = 0, $edit = array()) {
+  if ($op == 'list') {
+    $types = node_get_types();
+    $blocks = array();
+    if (!empty($types)) {
+      foreach ($types as $delta => $type) {
+        $blocks[$delta] = array(
+          'info' => t('Most Popular: !type', array('!type' => $type->name)),
+          // We cache this globally to minimize the calls to the google api. When
+          // cron is run the cache will be cleared and a new call made.
+          'cache' => BLOCK_CACHE_GLOBAL,
+        );
+      }
+    }
+    return $blocks;
+  }
+  elseif ($op == 'view') {
+    // Make sure the type passed in is valid.
+    $fake_node = new stdClass();
+    $fake_node->type = $delta;
+    $type = node_get_types('type', $fake_node);
+    // If we do not have a valid type we return.
+    if (!$type) {
+      return;
+    }
+    $block['subject'] = t('Most Popular: !type', array('!type' => $type->name));
+    $block['content'] = google_analytics_node_tracking_block_content($delta);
+    return $block;
+  }
+}
+
+/**
+ * Generate block content showing the most popular nodes of a certain type.
+ * @param string $node_type
+ *   A node type to generate a list of popular nodes from.
+ *
+ * @return
+ *   An html list (ul) of 10 most popular items.
+ */
+function google_analytics_node_tracking_block_content($node_type) {
+  // For more detail see the lullabot blog post at
+  // http://www.lullabot.com/articles/analyze-using-google-analytics-api
+  // and see the Google documentation on custom variables at
+  // http://code.google.com/apis/analytics/docs/gdata/gdataReferenceDimensionsMetrics.html#customVarValue
+  $request = array(
+    // Another dimension that can be added is pageTitle. This is the title
+    // as it appears in the title tag in the head of the page.
+    '#dimensions' => array('pagePath'),
+    '#metrics' => array('pageviews'),
+    // Another useful filter is ga:pagePath. This can be used to filter by part
+    // of the path and regular expressions can be used.
+    '#filter' => 'ga:customVarValue1=='. $node_type,
+    '#sort_metric' => array('-pageviews'),
+    // Another option is a #end_date. With the start and end dates a range can
+    // be generated.
+    // 2592000 = 60 seconds * 60 minutes * 24 hours * 30 days.
+    '#start_date' => date('Y-m-d', time() - 2592000),
+    '#max_results' => 10,
+  );
+  // $data is a result set of gapiReportEntry objects. See the gapi.class.php
+  // file in the google_analytics_api module for more details.
+  $data = google_analytics_api_report_data($request);
+  $items = array();
+  if (!empty($data)) {
+    foreach ($data as $page) {
+      $dimensions = $page->getDimensions();
+      $metrics = $page->getMetrics();
+
+      // Strip the leading slash or base_path so we have a
+      // normal-looking Drupal alias.
+      $alias = substr($dimensions['pagePath'], strlen(base_path()));
+
+      // Get the 'real' Drupal path for this item.
+      $path = drupal_lookup_path('source', $alias);
+
+      // We are worting by a custom variable for node type so we know every entry
+      // is a node. Here we get the title for the node.
+      if (arg(0, $path) == 'node' && is_numeric(arg(1, $path))) {
+        $id = arg(1, $path);
+
+        // Lookup the title only for published nodes. Nodes with a status of 0 are
+        // unpublished and should not be displayed.
+        $title = db_result(db_query("SELECT title FROM {node} WHERE nid = %d AND status = 1", $id));
+
+        // Only if a title was found add the item. No title means a node may
+        // have been deleted or is unpublished.
+        if ($title) {
+          $items[] = l($title, $alias);
+        }
+      }
+    }
+  }
+  watchdog('Google Analytics', 'Updated Google Analytics stats for node type: @type', array('@type' => $node_type), WATCHDOG_INFO);
+  if (!empty($items)) {
+    return theme('item_list', $items);
+  }
+  // If there are no items we want to return nothing. This will cause the block
+  // not to show. If you want to display a message to the user about no results
+  // that can go here.
+  return '';
+}
