@@ -12,6 +12,10 @@ are nodes and provides a block tracking the most popular nodes for each node typ
   to alter the code of this module/feature and the variable within the Google
   Analytics module.
 
+- This version is compatible with the 6.x-2.x branch of the Google Analyics module. The 6.x-3.x
+  branch uses async for Google Analytics and the Google Analytics variable would need to be
+  handled differently.
+
 ## Installation
 
 1. Enable block caching on /admin/settings/performance. Without block caching
