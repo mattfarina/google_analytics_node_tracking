@@ -16,6 +16,9 @@ are nodes and provides a block tracking the most popular nodes for each node typ
   branch uses async for Google Analytics and the Google Analytics variable would need to be
   handled differently.
 
+- The data available from the API is from yesterday on back. If you enable the module wait a day
+  before placing the blocks. The blocks will show no data for the first day the module is enabled.
+
 ## Installation
 
 1. Enable block caching on /admin/settings/performance. Without block caching
